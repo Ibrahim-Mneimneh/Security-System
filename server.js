@@ -1,8 +1,16 @@
 const express = require("express");
 const { send } = require("process");
+dotenv = require("dotenv");
+dotenv.config();
 const app = express();
 const axios = require("axios").default;
 const bodyParser = require("body-parser");
+const nodemailer = require("nodemailer");
+const fs = require("fs");
+const handlebars = require("handlebars");
+const path = require("path");
+const { getLebanonDateTime } = require("./getDate");
+
 const faceRecognition = async (image) => {
   try {
     const fs = require("fs");
@@ -36,7 +44,7 @@ const faceRecognition = async (image) => {
       return item.confidence;
     });
     console.log(result);
-    return result;
+    return res.status(200).json({ result });
   } catch (error) {
     console.error(error);
     return "error";
@@ -113,7 +121,108 @@ const recieveImage = async (req, res) => {
     return res.status(500).json(error);
   }
 };
+const sendIdentity = (req, res) => {
+  try {
+    const { base64Image } = req.body;
+    if (!base64Image) {
+      return res.status(400).json({ error: "Image not Included" });
+    }
+    const subject = "Someone at Your Stepdoor!";
+    const filePath = "./intrusion.hbs";
+    const recipientEmail = "ib79mneimneh@gmail.com";
+    const time = getLebanonDateTime();
+    const transporter = nodemailer.createTransport({
+      service: process.env.centralService,
+      auth: {
+        user: process.env.centralName,
+        pass: process.env.centralPass,
+      },
+    });
+    const templatePath = path.join(__dirname, filePath);
+    const source = fs.readFileSync(templatePath, "utf8");
+    const template = handlebars.compile(source);
+    const mailOptions = {
+      from: process.env.centralName,
+      to: recipientEmail,
+      subject,
+      html: template({
+        image: '<img src="cid:myimagecid123"/>',
+        time,
+      }),
+    };
+    const attachments = [
+      {
+        filename: "image.jpg",
+        content: base64Image,
+        encoding: "base64",
+        cid: "unique@nodemailer.com",
+      },
+    ];
+    mailOptions.attachments = attachments;
 
+    transporter.sendMail(mailOptions, function (error, info) {
+      if (error) {
+        return res.status(500).json({ error });
+      } else {
+        console.log("Email sent:", info.response);
+        return res.status(200).json({ result: "Email sent successfully!" });
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+const sendIntrusion = (req, res) => {
+  try {
+    const { base64Image } = req.body;
+    if (!base64Image) {
+      return res.status(400).json({ error: "Image not Included" });
+    }
+    const subject = "Home Intrusion Alert!!";
+    const filePath = "./somone.hbs";
+    const recipientEmail = "ib79mneimneh@gmail.com";
+    const time = getLebanonDateTime();
+    const transporter = nodemailer.createTransport({
+      service: process.env.centralService,
+      auth: {
+        user: process.env.centralName,
+        pass: process.env.centralPass,
+      },
+    });
+    const templatePath = path.join(__dirname, filePath);
+    const source = fs.readFileSync(templatePath, "utf8");
+    const template = handlebars.compile(source);
+    const mailOptions = {
+      from: process.env.centralName,
+      to: recipientEmail,
+      subject,
+      html: template({
+        image: '<img src="cid:myimagecid123"/>',
+        time,
+      }),
+    };
+    const attachments = [
+      {
+        filename: "image.jpg",
+        content: base64Image,
+        encoding: "base64",
+        cid: "unique@nodemailer.com",
+      },
+    ];
+    mailOptions.attachments = attachments;
+
+    transporter.sendMail(mailOptions, function (error, info) {
+      if (error) {
+        return res.status(500).json({ error, result: false });
+      } else {
+        console.log("Email sent:", info.response);
+        return res.status(200).json({ result: true });
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb" }));
 app.use((req, res, next) => {
@@ -123,7 +232,8 @@ app.use((req, res, next) => {
 app.use(bodyParser.json());
 
 app.post("/send/img", recieveImage);
-
+app.post("/identity", sendIdentity);
+app.post("/intrusion", sendIdentity);
 app.listen(5000, () => {
   console.log("Listening on port " + 5000);
 });
