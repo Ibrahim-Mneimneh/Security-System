@@ -44,7 +44,7 @@ const faceRecognition = async (image) => {
       return item.confidence;
     });
     console.log(result);
-    return res.status(200).json({ result });
+    return result;
   } catch (error) {
     console.error(error);
     return "error";
@@ -102,6 +102,7 @@ const recieveImage = async (req, res) => {
     }
     const decodedImage = Buffer.from(base64Image, "base64");
     const faceResult = await faceRecognition(decodedImage);
+    console.log(faceResult);
     if (faceResult == "error") {
       res.status(400).json({ error: "Failed to detect face" });
     }
@@ -110,11 +111,17 @@ const recieveImage = async (req, res) => {
     if (objectResult == "error") {
       res.status(400).json({ error: "Failed to detect object" });
     }
+    if (!faceResult) {
+      return res.status(200).json({
+        carResult: objectResult > 0.5 ? true : false,
+        faceResult: false,
+      });
+    }
     console.log("carResult: " + objectResult);
     console.log("faceResult: " + faceResult[0]);
     return res.status(200).json({
       carResult: objectResult > 0.5 ? true : false,
-      faceResult: faceResult[0] > 0.6 ? true : false,
+      faceResult: faceResult > 0.6 ? true : false,
     });
   } catch (error) {
     console.log(error);
