@@ -3,139 +3,76 @@ const { send } = require("process");
 dotenv = require("dotenv");
 dotenv.config();
 const app = express();
-const axios = require("axios").default;
 const bodyParser = require("body-parser");
 const nodemailer = require("nodemailer");
 const fs = require("fs");
 const handlebars = require("handlebars");
 const path = require("path");
 const { getLebanonDateTime } = require("./getDate");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-const faceRecognition = async (image) => {
+async function runImage(prompt, base64Image) {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINIAPI);
+  // For text-and-image input (multimodal), use the gemini-pro-vision model
+  const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+  const imageParts = {
+    inlineData: {
+      data: base64Image,
+      mimeType: "image/jpeg",
+    },
+  };
+  const result = await model.generateContent([prompt, imageParts]);
+  const response = result.response;
+  let text = response.text();
+  text = JSON.parse(text);
+  return text;
+}
+function saveBase64Image(base64String, outputPath) {
   try {
-    const fs = require("fs");
-    const FormData = require("form-data");
+    // Remove header from base64 data
+    const base64Data = base64String.replace(/^data:image\/jpeg;base64,/, "");
 
-    fs.writeFileSync("face.jpg", image, "binary");
+    // Decode base64 data into a buffer
+    const imageBuffer = Buffer.from(base64Data, "base64");
 
-    console.log("Image saved successfully.");
+    // Write the buffer to the file
+    fs.writeFileSync(outputPath, imageBuffer);
 
-    const imageStream = fs.createReadStream("face.jpg");
-
-    const form = new FormData();
-    form.append("providers", "google");
-    form.append("file", imageStream);
-    form.append("fallback_providers", "");
-
-    const options = {
-      method: "POST",
-      url: "https://api.edenai.run/v2/image/face_detection",
-      headers: {
-        Authorization:
-          "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMmQ5MTA4NzQtZmIwYS00MzY0LWIyNzgtZTViNTNhODE0ODI3IiwidHlwZSI6ImFwaV90b2tlbiJ9.L8skxvE3M9M3Ndflz6Fqy8ye8FK0R0hdJXa8vzmJdxU",
-        "Content-Type": "multipart/form-data; boundary=" + form.getBoundary(),
-      },
-      data: form,
-    };
-
-    const response = await axios.request(options);
-    console.log(response.data);
-    const result = response.data.google.items.map((item) => {
-      return item.confidence;
-    });
-    console.log(result);
-    return result;
+    console.log("Image saved successfully as", outputPath);
   } catch (error) {
-    console.error(error);
-    return "error";
+    console.error("An error occurred:", error);
   }
-};
+}
 
-const objectRecognition = async (image) => {
-  try {
-    const fs = require("fs");
-    const FormData = require("form-data");
-
-    fs.writeFileSync("image.jpg", image, "binary");
-
-    console.log("Image saved successfully.");
-
-    const imageStream = fs.createReadStream("image.jpg");
-
-    const form = new FormData();
-    form.append("providers", "google");
-    form.append("file", imageStream);
-    form.append("fallback_providers", "");
-
-    const options = {
-      method: "POST",
-      url: "https://api.edenai.run/v2/image/object_detection",
-      headers: {
-        Authorization:
-          "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMmQ5MTA4NzQtZmIwYS00MzY0LWIyNzgtZTViNTNhODE0ODI3IiwidHlwZSI6ImFwaV90b2tlbiJ9.L8skxvE3M9M3Ndflz6Fqy8ye8FK0R0hdJXa8vzmJdxU",
-        "Content-Type": "multipart/form-data; boundary=" + form.getBoundary(),
-      },
-      data: form,
-    };
-
-    const response = await axios.request(options);
-    console.log(response.data);
-    const carItem = response.data.google.items.find(
-      (item) => item.label === "Car"
-    );
-    if (!carItem) {
-      return 0;
-    }
-
-    return carItem.confidence;
-  } catch (error) {
-    console.error(error);
-    return "error";
-  }
-};
-
-const recieveImage = async (req, res) => {
+const analyzeImage = async (req, res) => {
   try {
     const { base64Image } = req.body;
     if (!base64Image) {
-      return res.status(404).json({ error: "Image not found" });
+      return res.status(400).json({ error: "Please add a base64Image" });
     }
-    const decodedImage = Buffer.from(base64Image, "base64");
-    const faceResult = await faceRecognition(decodedImage);
-    console.log(faceResult);
-    if (faceResult == "error") {
-      res.status(400).json({ error: "Failed to detect face" });
+    saveBase64Image(base64Image, "./image.jpg");
+    const prompt =
+      'Does this picture contain a human or a car.Provide this information the format as following as a string: {"car":true, "human":true}';
+    const result = await runImage(prompt, base64Image);
+    if (!result) {
+      return res.status(400).json({ error: "Failed to obtain result" });
     }
-
-    const objectResult = await objectRecognition(decodedImage);
-    if (objectResult == "error") {
-      res.status(400).json({ error: "Failed to detect object" });
+    let emailResult;
+    if (result.human || result.car) {
+      emailResult = emailSender(
+        base64Image,
+        "Someone at Your Stepdoor!",
+        "./someone.hbs"
+      );
     }
-    if (!faceResult) {
-      return res.status(200).json({
-        carResult: objectResult > 0.5 ? true : false,
-        faceResult: false,
-      });
-    }
-    console.log("carResult: " + objectResult);
-    console.log("faceResult: " + faceResult[0]);
-    return res.status(200).json({
-      carResult: objectResult > 0.5 ? true : false,
-      faceResult: faceResult > 0.6 ? true : false,
-    });
+    return res.status(200).json(result);
   } catch (error) {
-    console.log(error);
-    return res.status(500).json(error);
+    return res.status(500).json({ error: error.message });
   }
 };
-const sendIdentity = (req, res) => {
+
+const emailSender = (base64Image, subject, filePath) => {
   try {
-    const { base64Image } = req.body;
-    if (!base64Image) {
-      return res.status(400).json({ error: "Image not Included" });
-    }
-    const subject = "Someone at Your Stepdoor!";
-    const filePath = "./intrusion.hbs";
     const recipientEmail = "ib79mneimneh@gmail.com";
     const time = getLebanonDateTime();
     const transporter = nodemailer.createTransport({
@@ -169,14 +106,14 @@ const sendIdentity = (req, res) => {
 
     transporter.sendMail(mailOptions, function (error, info) {
       if (error) {
-        return res.status(500).json({ error });
+        throw Error("Error sending email:" + error);
       } else {
         console.log("Email sent:", info.response);
-        return res.status(200).json({ result: "Email sent successfully!" });
+        return "success";
       }
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    throw Error("Error sending email, 500:", error.message);
   }
 };
 const sendIntrusion = (req, res) => {
@@ -185,47 +122,12 @@ const sendIntrusion = (req, res) => {
     if (!base64Image) {
       return res.status(400).json({ error: "Image not Included" });
     }
-    const subject = "Home Intrusion Alert!!";
-    const filePath = "./somone.hbs";
-    const recipientEmail = "ib79mneimneh@gmail.com";
-    const time = getLebanonDateTime();
-    const transporter = nodemailer.createTransport({
-      service: process.env.centralService,
-      auth: {
-        user: process.env.centralName,
-        pass: process.env.centralPass,
-      },
-    });
-    const templatePath = path.join(__dirname, filePath);
-    const source = fs.readFileSync(templatePath, "utf8");
-    const template = handlebars.compile(source);
-    const mailOptions = {
-      from: process.env.centralName,
-      to: recipientEmail,
-      subject,
-      html: template({
-        image: '<img src="cid:myimagecid123"/>',
-        time,
-      }),
-    };
-    const attachments = [
-      {
-        filename: "image.jpg",
-        content: base64Image,
-        encoding: "base64",
-        cid: "unique@nodemailer.com",
-      },
-    ];
-    mailOptions.attachments = attachments;
-
-    transporter.sendMail(mailOptions, function (error, info) {
-      if (error) {
-        return res.status(500).json({ error, result: false });
-      } else {
-        console.log("Email sent:", info.response);
-        return res.status(200).json({ result: true });
-      }
-    });
+    const emailResult = emailSender(
+      base64Image,
+      "Home Intrusion Alert!!",
+      "./intrusion.hbs"
+    );
+    return res.status(200).json({ result: "success" });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -238,9 +140,8 @@ app.use((req, res, next) => {
 });
 app.use(bodyParser.json());
 
-app.post("/send/img", recieveImage);
-app.post("/identity", sendIdentity);
-app.post("/intrusion", sendIdentity);
+app.post("/send/img", analyzeImage);
+app.post("/intrusion", sendIntrusion);
 app.listen(5000, () => {
   console.log("Listening on port " + 5000);
 });
